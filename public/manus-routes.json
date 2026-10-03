@@ -1,0 +1,6 @@
+{
+  "routes": [
+    { "path": "/", "title": "MiiTuber Web" },
+    { "path": "/?view=clean-output", "title": "MiiTuber Clean Output" }
+  ]
+}

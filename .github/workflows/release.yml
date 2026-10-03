@@ -1,0 +1,110 @@
+name: Release
+
+# Run this workflow manually to cut the version currently declared by the app.
+# Pushing a matching v* tag manually remains supported as a fallback.
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      name: ${{ steps.release.outputs.name }}
+      body: ${{ steps.release.outputs.body }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Validate version and prepare release notes
+        id: release
+        run: node scripts/prepare-release.mjs
+
+      - name: Create version tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          existing_commit="$(git rev-list -n 1 "$RELEASE_TAG" 2>/dev/null || true)"
+          if [ -n "$existing_commit" ]; then
+            if [ "$existing_commit" != "$GITHUB_SHA" ]; then
+              echo "Tag $RELEASE_TAG already points to $existing_commit, not $GITHUB_SHA."
+              exit 1
+            fi
+            echo "Tag $RELEASE_TAG already points to this commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$RELEASE_TAG" "$GITHUB_SHA" -m "Release $RELEASE_TAG"
+          git push origin "$RELEASE_TAG"
+
+  release:
+    needs: prepare
+    permissions:
+      # tauri-action needs write access to create the GitHub Release + upload assets.
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "windows-latest"
+            args: ""
+          # Ship one unsigned universal download while Apple Developer signing
+          # and notarization remain unavailable.
+          - platform: "macos-latest"
+            args: "--target universal-apple-darwin --bundles app,dmg --no-sign"
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Always build the exact commit selected by the validated version tag.
+          ref: ${{ needs.prepare.outputs.tag }}
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install universal macOS Rust targets
+        if: runner.os == 'macOS'
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Cache Rust build
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # Provided automatically by GitHub — lets the action create the Release.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ needs.prepare.outputs.tag }}
+          releaseName: ${{ needs.prepare.outputs.name }}
+          releaseBody: ${{ needs.prepare.outputs.body }}
+          # Keep the release as a draft for review before publication.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
