@@ -7,4 +7,4 @@
 - [x] Mii-Creator-Custom-Outfit-Dateien werden erkannt; verwertbare Standard-Payloads werden angezeigt, nicht rekonstruierbare Daten erhalten einen sichtbaren Fallback mit FFSD-Hinweis.
 - [x] `public/manus-routes.json`, `app.config.ts`, README und Build-Konfiguration sind für die verwaltete Web-App eingerichtet.
 - [x] Unit-Tests (139 bestanden), TypeScript-Produktionsbuild, Preview und Route-Manifest sind erfolgreich geprüft.
-- [ ] Die fertige Quelle ist als Git-Repository/Checkpoint mit nachvollziehbaren Änderungen gespeichert. (Nach lokalem Commit folgt der verwaltete Checkpoint.)
+- [x] Die fertige Quelle ist als lokales Git-Repository mit nachvollziehbaren Änderungen gespeichert (`main`, letzter Commit `758fe18`). Ein separates GitHub-Repository wurde nicht ohne Ziel/Bestätigung angelegt.
