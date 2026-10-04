@@ -21,11 +21,15 @@ export function inspectCustomOutfit(bytes: Uint8Array, filename = ""): CustomOut
   const extension = filename.toLowerCase().split(".").pop() ?? "";
   if (STANDARD_SIZES.has(bytes.length)) {
     return {
-      detected: false,
+      detected: extension === "ffsd" || extension === "cfsd",
       supported: true,
       format: "standard-mii",
-      message: "Standard-Mii-Daten erkannt.",
-      metadata: {},
+      message:
+        "Standard-FFSD erkannt. Der Mii wird vollständig geladen; Mii-Creator-Caps und Custom-Kleidung sind separate 3D-Assets und nicht Teil dieser 96 Byte.",
+      metadata: {
+        payloadBytes: String(bytes.length),
+        customLayer: "separates GLB/GLTF erforderlich",
+      },
     };
   }
   if (LEGACY_MIIC_SIZES.has(bytes.length)) {

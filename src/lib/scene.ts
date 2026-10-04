@@ -62,6 +62,8 @@ export class AvatarScene {
   private bodyVisible = true;
   private renderFrameCount = 0;
   private lastRenderFpsAt = performance.now();
+  private animationFrameId: number | null = null;
+  private renderTimeoutId: number | null = null;
   /** World-space point the camera orbits/points at (the framed model's center). */
   private readonly framedTarget = new THREE.Vector3();
   /** Camera distance from framedTarget that fits the model in view. */
@@ -117,7 +119,22 @@ export class AvatarScene {
     });
 
     this.resize();
-    this.animate();
+    this.scheduleAnimation();
+
+    const reschedule = () => {
+      if (this.animationFrameId !== null) {
+        cancelAnimationFrame(this.animationFrameId);
+        this.animationFrameId = null;
+      }
+      if (this.renderTimeoutId !== null) {
+        window.clearTimeout(this.renderTimeoutId);
+        this.renderTimeoutId = null;
+      }
+      this.scheduleAnimation();
+    };
+    document.addEventListener("visibilitychange", reschedule);
+    window.addEventListener("focus", reschedule);
+    window.addEventListener("blur", reschedule);
   }
 
   /**
@@ -343,7 +360,21 @@ export class AvatarScene {
     }
   }
 
+  private scheduleAnimation() {
+    const deprioritized = document.hidden || !document.hasFocus();
+    if (deprioritized) {
+      // rAF is throttled aggressively when a tab loses focus. A bounded timer
+      // keeps the WebGL canvas responsive for OBS/browser capture instead of
+      // dropping to a visibly stuttering one-frame-per-second cadence.
+      this.renderTimeoutId = window.setTimeout(this.animate, 1000 / 30);
+    } else {
+      this.animationFrameId = requestAnimationFrame(this.animate);
+    }
+  }
+
   private animate = () => {
+    this.animationFrameId = null;
+    this.renderTimeoutId = null;
     const now = performance.now();
     this.renderFrameCount += 1;
 
@@ -358,6 +389,6 @@ export class AvatarScene {
     this.resize();
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
-    requestAnimationFrame(this.animate);
+    this.scheduleAnimation();
   };
 }

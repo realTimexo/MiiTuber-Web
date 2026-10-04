@@ -3,7 +3,11 @@ import { inspectCustomOutfit } from "./customOutfitParser";
 
 describe("inspectCustomOutfit", () => {
   it("recognizes a native FFSD payload", () => {
-    expect(inspectCustomOutfit(new Uint8Array(96), "avatar.ffsd").supported).toBe(true);
+    const result = inspectCustomOutfit(new Uint8Array(96), "avatar.ffsd");
+    expect(result.supported).toBe(true);
+    expect(result.detected).toBe(true);
+    expect(result.metadata.payloadBytes).toBe("96");
+    expect(result.message).toMatch(/separate.*3D-Assets/i);
   });
 
   it("explains the modern Mii Creator limitation", () => {

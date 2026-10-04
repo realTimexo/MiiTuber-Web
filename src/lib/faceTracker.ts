@@ -64,7 +64,16 @@ export class FaceTracker {
       throw error;
     }
 
-    const minFrameIntervalMs = maxFpsToMinIntervalMs(options.maxFps ?? 30);
+    const requestedFrameIntervalMs = maxFpsToMinIntervalMs(options.maxFps ?? 30);
+
+    const getFrameIntervalMs = () => {
+      // Browsers may heavily throttle rAF in an unfocused tab. Keep tracking
+      // alive with a bounded timer and reduce the detector load slightly instead
+      // of allowing a burst of stale work when focus returns.
+      if (document.hidden) return Math.max(requestedFrameIntervalMs, 1000 / 15);
+      if (!document.hasFocus()) return Math.max(requestedFrameIntervalMs, 1000 / 30);
+      return requestedFrameIntervalMs;
+    };
 
     // rAF stops entirely while the window is minimized or the webview is
     // considered hidden, which would freeze pose events to the clean-output
@@ -72,8 +81,8 @@ export class FaceTracker {
     // setTimeout whenever the document reports hidden.
     const scheduleNextFrame = () => {
       if (!this.running) return;
-      if (document.hidden) {
-        this.timeoutId = window.setTimeout(processFrame, minFrameIntervalMs);
+      if (document.hidden || !document.hasFocus()) {
+        this.timeoutId = window.setTimeout(processFrame, getFrameIntervalMs());
       } else {
         this.animationFrameId = requestAnimationFrame(processFrame);
       }
@@ -87,7 +96,7 @@ export class FaceTracker {
       if (this.video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
         try {
           const now = performance.now();
-          if (now - this.lastDetectionAt < minFrameIntervalMs) {
+          if (now - this.lastDetectionAt < getFrameIntervalMs()) {
             scheduleNextFrame();
             return;
           }
@@ -132,8 +141,13 @@ export class FaceTracker {
       scheduleNextFrame();
     };
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    this.removeVisibilityListener = () =>
+    window.addEventListener("focus", handleVisibilityChange);
+    window.addEventListener("blur", handleVisibilityChange);
+    this.removeVisibilityListener = () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("focus", handleVisibilityChange);
+      window.removeEventListener("blur", handleVisibilityChange);
+    };
   }
 
   stop() {
