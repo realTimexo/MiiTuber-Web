@@ -14,6 +14,7 @@ export type LibraryAvatar = {
   bytes: number[];
   thumbnailDataUrl: string | null;
   outfitInfo?: AvatarOutfitInfo;
+  customOutfitBytes?: number[];
   createdAt: number;
 };
 
@@ -22,6 +23,7 @@ export type NewAvatarInput = {
   bytes: number[];
   thumbnailDataUrl?: string | null;
   outfitInfo?: AvatarOutfitInfo;
+  customOutfitBytes?: number[];
 };
 
 export interface StorageLike {
@@ -50,6 +52,8 @@ function isValidAvatar(value: unknown): value is LibraryAvatar {
       typeof candidate.thumbnailDataUrl === "string") &&
     (candidate.outfitInfo === undefined ||
       typeof candidate.outfitInfo === "object") &&
+    (candidate.customOutfitBytes === undefined ||
+      isByteArray(candidate.customOutfitBytes)) &&
     typeof candidate.createdAt === "number"
   );
 }
@@ -105,6 +109,7 @@ export function createAvatar(input: NewAvatarInput): LibraryAvatar {
     bytes: input.bytes,
     thumbnailDataUrl: input.thumbnailDataUrl ?? null,
     outfitInfo: input.outfitInfo,
+    customOutfitBytes: input.customOutfitBytes,
     createdAt: Date.now(),
   };
 }

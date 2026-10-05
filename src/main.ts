@@ -242,6 +242,7 @@ const outputChannel = createOutputChannel();
 let cleanOutputWindowRef: Window | null = null;
 
 const fileInput = document.querySelector<HTMLInputElement>("#mii-file");
+const customOutfitFileInput = document.querySelector<HTMLInputElement>("#custom-outfit-file");
 const statusEl = document.querySelector<HTMLElement>("#status");
 const viewerCanvas = document.querySelector<HTMLCanvasElement>("#mii-viewer");
 const appShellEl = document.querySelector<HTMLElement>(".app-shell");
@@ -406,7 +407,12 @@ const updateCloseButton = document.querySelector<HTMLButtonElement>(
   "#update-modal-close",
 );
 const updateDevPanel = document.querySelector<HTMLElement>("#update-dev-panel");
-let pendingImport: { bytes: number[]; thumbnailDataUrl: string | null; outfitInfo: CustomOutfitInfo } | null = null;
+let pendingImport: {
+  bytes: number[];
+  thumbnailDataUrl: string | null;
+  outfitInfo: CustomOutfitInfo;
+  customOutfitBytes: number[] | null;
+} | null = null;
 let currentAvatarId: string | null = null;
 let avatarLoaded = false;
 let avatarHasExpressionVariants = false;
@@ -470,6 +476,7 @@ type LipSyncCalibrationSession = {
 type CleanOutputStoredAvatar = {
   name: string;
   bytes: number[];
+  customOutfitBytes?: number[];
 };
 
 type CleanOutputBackgroundPayload = {
@@ -1135,6 +1142,11 @@ async function loadCleanOutputAvatar(payload: CleanOutputAvatarPayload) {
       normalizeMiiBytes(new Uint8Array(payload.bytes)),
       ffl,
     );
+    if (payload.customOutfitBytes?.length) {
+      await avatarScene.loadCustomOutfitFromGlb(
+        new Uint8Array(payload.customOutfitBytes),
+      );
+    }
     applyCleanOutputPose(payload.pose);
     if (emptyPreviewEl) emptyPreviewEl.hidden = true;
     setStatus(`OBS Clean View rendering ${payload.name}.`, "success");
@@ -2656,6 +2668,7 @@ function wireLibraryControls() {
   });
   importPick?.addEventListener("click", () => fileInput?.click());
   fileInput?.addEventListener("change", () => void handleImportFile());
+  customOutfitFileInput?.addEventListener("change", () => void handleCustomOutfitFile());
   importNameInput?.addEventListener("input", () => {
     if (importSaveButton) {
       importSaveButton.disabled = !pendingImport;
@@ -2850,12 +2863,17 @@ function openImportModal() {
   }
   setImportStatus("", "idle");
   if (fileInput) fileInput.value = "";
+  if (customOutfitFileInput) {
+    customOutfitFileInput.value = "";
+    customOutfitFileInput.disabled = true;
+  }
 }
 
 function closeImportModal() {
   if (importModal) importModal.hidden = true;
   pendingImport = null;
   if (fileInput) fileInput.value = "";
+  if (customOutfitFileInput) customOutfitFileInput.value = "";
 }
 
 function setImportStatus(
@@ -2865,6 +2883,25 @@ function setImportStatus(
   if (!importStatusEl) return;
   importStatusEl.textContent = message;
   importStatusEl.dataset.tone = tone;
+}
+
+async function handleCustomOutfitFile() {
+  const file = customOutfitFileInput?.files?.[0];
+  if (!file || !pendingImport) return;
+
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const isGlb = bytes.length >= 4 && new TextDecoder().decode(bytes.slice(0, 4)) === "glTF";
+    if (!isGlb) throw new Error("Please choose a binary GLB exported by Mii Creator.");
+    pendingImport.customOutfitBytes = Array.from(bytes);
+    setImportStatus(
+      `Base Mii loaded. Custom GLB attached (${(bytes.byteLength / 1024).toFixed(0)} KB). It will be shown with its original skin weights.`,
+      "success",
+    );
+  } catch (error) {
+    if (customOutfitFileInput) customOutfitFileInput.value = "";
+    setImportStatus(userFacingError("AVATAR_FILE_INVALID", error), "error");
+  }
 }
 
 async function handleImportFile() {
@@ -2901,7 +2938,8 @@ async function handleImportFile() {
       throw error;
     }
 
-    pendingImport = { bytes, thumbnailDataUrl, outfitInfo };
+    pendingImport = { bytes, thumbnailDataUrl, outfitInfo, customOutfitBytes: null };
+    if (customOutfitFileInput) customOutfitFileInput.disabled = false;
     renderImportPreview(thumbnailDataUrl);
     const defaultName = file.name.replace(/\.[^.]+$/, "");
     if (importNameInput) {
@@ -2939,14 +2977,16 @@ function saveImportedAvatar() {
 
   try {
     const name = sanitizeName(importNameInput?.value ?? "");
-    addAvatar(getLibraryStorage(), {
+    const avatar = addAvatar(getLibraryStorage(), {
       name,
       bytes: pendingImport.bytes,
       thumbnailDataUrl: pendingImport.thumbnailDataUrl,
       outfitInfo: pendingImport.outfitInfo,
+      customOutfitBytes: pendingImport.customOutfitBytes ?? undefined,
     });
     closeImportModal();
     renderLibraryGrid();
+    if (avatar) void selectAvatar(avatar.id);
   } catch (error) {
     setImportStatus(userFacingError("AVATAR_SAVE_FAILED", error), "error");
   }
@@ -2961,7 +3001,7 @@ async function selectAvatar(id: string) {
   if (workspaceAvatarNameEl) workspaceAvatarNameEl.textContent = avatar.name;
   setAppMode("workspace");
   requestAnimationFrame(() => avatarScene.resize());
-  await renderAvatarBytes(avatar.bytes, avatar.name);
+  await renderAvatarBytes(avatar.bytes, avatar.name, avatar.customOutfitBytes);
 
   if (!avatar.thumbnailDataUrl) {
     void backfillThumbnail(id, avatar.bytes);
@@ -2982,7 +3022,11 @@ async function renderMiiThumbnail(miiBytes: Uint8Array): Promise<string> {
   return renderMiiThumbnailDataUrl(ffl, miiBytes);
 }
 
-async function renderAvatarBytes(miiBytes: number[], name: string) {
+async function renderAvatarBytes(
+  miiBytes: number[],
+  name: string,
+  customOutfitBytes?: number[],
+) {
   try {
     // Resolve the FFL context FIRST. If AFLResHigh_2_3.dat is missing this
     // blocks on the "choose the resource file" prompt, which owns the red
@@ -2995,7 +3039,13 @@ async function renderAvatarBytes(miiBytes: number[], name: string) {
       normalizeMiiBytes(new Uint8Array(miiBytes)),
       ffl,
     );
-    saveCleanOutputAvatar({ name, bytes: miiBytes });
+    let outfitMeshCount = 0;
+    if (customOutfitBytes?.length) {
+      outfitMeshCount = await avatarScene.loadCustomOutfitFromGlb(
+        new Uint8Array(customOutfitBytes),
+      );
+    }
+    saveCleanOutputAvatar({ name, bytes: miiBytes, customOutfitBytes });
     const expressionIndex = applyExpressionPose(FFLExpression.Normal, {
       pitch: 0,
       yaw: 0,
@@ -3015,6 +3065,7 @@ async function renderAvatarBytes(miiBytes: number[], name: string) {
     logRenderEvent("avatar render succeeded", {
       name,
       renderer: "ffl.js",
+      outfitMeshCount,
       ...loadResult,
     });
     if (emptyPreviewEl) emptyPreviewEl.hidden = true;

@@ -25,10 +25,10 @@ export function inspectCustomOutfit(bytes: Uint8Array, filename = ""): CustomOut
       supported: true,
       format: "standard-mii",
       message:
-        "Standard-FFSD erkannt. Der Mii wird vollständig geladen; Mii-Creator-Caps und Custom-Kleidung sind separate 3D-Assets und nicht Teil dieser 96 Byte.",
+        "Standard FFSD detected. The Mii will load fully; Mii Creator caps and custom clothing are separate 3D assets and are not part of these 96 bytes.",
       metadata: {
         payloadBytes: String(bytes.length),
-        customLayer: "separates GLB/GLTF erforderlich",
+        customLayer: "separate GLB/GLTF required",
       },
     };
   }
@@ -37,8 +37,8 @@ export function inspectCustomOutfit(bytes: Uint8Array, filename = ""): CustomOut
       detected: extension === "miic" || bytes.length > 96,
       supported: true,
       format: "legacy-miic",
-      message: "Legacy-Mii-Creator-Daten erkannt; Standard-Mii-Payload übernommen.",
-      metadata: { payloadBytes: "96", customLayer: "nicht in FFL.js abbildbar" },
+      message: "Legacy Mii Creator data detected; the standard Mii payload was mapped.",
+      metadata: { payloadBytes: "96", customLayer: "not represented by FFL.js" },
     };
   }
   if (bytes.length === 128 || extension === "miic") {
@@ -46,8 +46,8 @@ export function inspectCustomOutfit(bytes: Uint8Array, filename = ""): CustomOut
       detected: true,
       supported: false,
       format: "modern-miic",
-      message: "Modernes Mii-Creator-Format erkannt. Der Standard-Mii kann erst nach einem FFSD-Export gerendert werden; das Custom-Outfit wird nicht still verworfen.",
-      metadata: { exportHint: "In Mii Creator als FFSD exportieren" },
+      message: "Modern Mii Creator data detected. Export an FFSD base Mii before rendering; the custom outfit was not silently discarded.",
+      metadata: { exportHint: "Export the base Mii as FFSD in Mii Creator" },
     };
   }
 
@@ -58,8 +58,8 @@ export function inspectCustomOutfit(bytes: Uint8Array, filename = ""): CustomOut
     supported: STANDARD_SIZES.has(bytes.length),
     format: looksLikeContainer ? "custom-container" : "unknown",
     message: looksLikeContainer
-      ? "Custom-Outfit-Container erkannt, aber kein sicher ausführbares 3D-Asset enthalten. Standard-Mii-Daten werden separat geprüft."
-      : "Unbekanntes Mii-Format.",
+      ? "Custom outfit container detected, but it does not contain a safe executable 3D asset. Standard Mii data will be checked separately."
+      : "Unknown Mii format.",
     metadata: looksLikeContainer ? { containerText: text.slice(0, 160) } : {},
   };
 }

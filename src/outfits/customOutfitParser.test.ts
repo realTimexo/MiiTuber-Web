@@ -7,7 +7,7 @@ describe("inspectCustomOutfit", () => {
     expect(result.supported).toBe(true);
     expect(result.detected).toBe(true);
     expect(result.metadata.payloadBytes).toBe("96");
-    expect(result.message).toMatch(/separate.*3D-Assets/i);
+    expect(result.message).toMatch(/separate.*3D assets/i);
   });
 
   it("explains the modern Mii Creator limitation", () => {

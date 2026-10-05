@@ -1,5 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import type { CharModel } from "ffl.js";
 import type { BodyModel } from "ffl.js/helpers/BodyUtilities.js";
 import type { HeadRotation } from "./types";
@@ -57,6 +59,8 @@ export class AvatarScene {
   private bodyModel: BodyModel | null = null;
   /** What head-tracking rotates: the head group alone when a body is attached. */
   private headRoot: THREE.Object3D | null = null;
+  private customOutfitRoot: THREE.Object3D | null = null;
+  private customOutfitHeadRoot: THREE.Object3D | null = null;
   /** Captured disposeModel() from BodyUtilities so sync teardown can use it. */
   private disposeBodyModelFn: ((model: THREE.Object3D) => void) | null = null;
   private bodyVisible = true;
@@ -184,6 +188,62 @@ export class AvatarScene {
     };
   }
 
+  /** Load a Mii Creator full-body GLB and keep only its outfit/accessory meshes. */
+  async loadCustomOutfitFromGlb(bytes: Uint8Array): Promise<number> {
+    this.clearCustomOutfit();
+    const loader = new GLTFLoader();
+    loader.setMeshoptDecoder(MeshoptDecoder);
+    const gltf = await new Promise<{ scene: THREE.Group }>((resolve, reject) => {
+      const buffer = bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+      );
+      loader.parse(buffer, "", resolve, reject);
+    });
+
+    const outfitPattern =
+      /cap|hat|clothes|cloth|outfit|accessor|acce_|shirt|hoodie|pants|skirt|sleeve|ring/i;
+    let visibleMeshes = 0;
+    gltf.scene.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const name = `${object.name} ${object.parent?.name ?? ""}`;
+      mesh.visible = outfitPattern.test(name);
+      mesh.frustumCulled = false;
+      if (mesh.visible) visibleMeshes += 1;
+    });
+
+    if (visibleMeshes === 0) {
+      throw new Error("No outfit, cap, or accessory meshes were found in this GLB.");
+    }
+
+    gltf.scene.name = "custom-mii-creator-outfit";
+    this.modelRoot.add(gltf.scene);
+    this.customOutfitRoot = gltf.scene;
+    this.customOutfitHeadRoot =
+      gltf.scene.getObjectByName("headModel") ??
+      gltf.scene.getObjectByName("miiHead") ??
+      gltf.scene.getObjectByName("Head") ??
+      null;
+    this.renderer.render(this.scene, this.camera);
+    if (this.currentModel) this.frameModel(this.modelRoot);
+    return visibleMeshes;
+  }
+
+  clearCustomOutfit() {
+    if (!this.customOutfitRoot) return;
+    this.modelRoot.remove(this.customOutfitRoot);
+    this.customOutfitRoot.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      mesh.geometry.dispose();
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      materials.forEach((material) => material.dispose());
+    });
+    this.customOutfitRoot = null;
+    this.customOutfitHeadRoot = null;
+  }
+
   setExpression(index: number) {
     this.charModel?.setExpression(index);
   }
@@ -195,6 +255,11 @@ export class AvatarScene {
     if (!target) return;
 
     target.rotation.set(
+      THREE.MathUtils.degToRad(rotation.pitch),
+      THREE.MathUtils.degToRad(rotation.yaw),
+      THREE.MathUtils.degToRad(rotation.roll),
+    );
+    this.customOutfitHeadRoot?.rotation.set(
       THREE.MathUtils.degToRad(rotation.pitch),
       THREE.MathUtils.degToRad(rotation.yaw),
       THREE.MathUtils.degToRad(rotation.roll),
@@ -339,6 +404,7 @@ export class AvatarScene {
   }
 
   private disposeCurrentModel() {
+    this.clearCustomOutfit();
     if (this.charModel) {
       if (this.bodyModel) {
         // The head is a child of the body, so removing the body root detaches

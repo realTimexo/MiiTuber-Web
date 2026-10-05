@@ -313,9 +313,14 @@
             <div class="import-preview" id="import-preview">
               <span>No file selected</span>
             </div>
-            <button class="btn" id="import-pick" type="button">Choose file&hellip;</button>
+            <button class="btn" id="import-pick" type="button">Choose Mii file&hellip;</button>
             <input id="mii-file" type="file" accept=".ffsd,.cfsd,.mii,.miigx,.mae,.rcd,.rsd,.miic,.bin,.dat" />
-            <span class="hint">FFSD, Wii, Mii Studio or legacy .miic data. Current Mii-Creator custom outfits require an FFSD export unless their format exposes a browser-readable 3D asset.</span>
+            <span class="hint">Step 1: choose the FFSD/Mii file. Step 2: optionally add the GLB exported by Mii Creator for its cap, rings and custom clothing.</span>
+            <label class="field">
+              Custom outfit (optional)
+              <input id="custom-outfit-file" type="file" accept=".glb,model/gltf-binary" disabled />
+            </label>
+            <span class="hint">Your GLB keeps its original skeleton and skin weights. MiiTuber only shows meshes named like cap, hat, clothes, accessory, ring, hoodie, pants or skirt.</span>
             <label class="field">
               Name
               <input id="import-name" type="text" placeholder="Avatar name" disabled />
