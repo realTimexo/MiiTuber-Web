@@ -61,6 +61,14 @@ export class AvatarScene {
   private headRoot: THREE.Object3D | null = null;
   private customOutfitRoot: THREE.Object3D | null = null;
   private customOutfitHeadRoot: THREE.Object3D | null = null;
+  private customRigPairs: Array<{
+    outfit: THREE.Bone;
+    avatar: THREE.Object3D;
+    outfitBindWorld: THREE.Matrix4;
+    avatarBindWorld: THREE.Matrix4;
+  }> = [];
+  private customOutfitHeadBindWorld: THREE.Matrix4 | null = null;
+  private avatarHeadBindWorld: THREE.Matrix4 | null = null;
   /** Captured disposeModel() from BodyUtilities so sync teardown can use it. */
   private disposeBodyModelFn: ((model: THREE.Object3D) => void) | null = null;
   private bodyVisible = true;
@@ -225,6 +233,14 @@ export class AvatarScene {
       gltf.scene.getObjectByName("miiHead") ??
       gltf.scene.getObjectByName("Head") ??
       null;
+    this.fitCustomOutfitToAvatar();
+    this.buildCustomRigPairs(gltf.scene);
+    if (this.customOutfitHeadRoot && this.headRoot) {
+      this.customOutfitHeadRoot.updateWorldMatrix(true, true);
+      this.headRoot.updateWorldMatrix(true, true);
+      this.customOutfitHeadBindWorld = this.customOutfitHeadRoot.matrixWorld.clone();
+      this.avatarHeadBindWorld = this.headRoot.matrixWorld.clone();
+    }
     this.renderer.render(this.scene, this.camera);
     if (this.currentModel) this.frameModel(this.modelRoot);
     return visibleMeshes;
@@ -242,6 +258,95 @@ export class AvatarScene {
     });
     this.customOutfitRoot = null;
     this.customOutfitHeadRoot = null;
+    this.customRigPairs = [];
+    this.customOutfitHeadBindWorld = null;
+    this.avatarHeadBindWorld = null;
+  }
+
+  private buildCustomRigPairs(outfitRoot: THREE.Object3D) {
+    if (!this.bodyModel) return;
+    const boneMap: Record<string, string> = {
+      nw4f_root: "all_root",
+      Skl_Root: "skl_root",
+      Spine_1: "chest",
+      Spine_2: "chest_2",
+      Arm_1_L: "arm_l1",
+      Arm_2_L: "arm_l2",
+      Wrist_L: "wrist_l",
+      Arm_1_R: "arm_r1",
+      Arm_2_R: "arm_r2",
+      Wrist_R: "wrist_r",
+      Head: "head",
+      Waist: "hip",
+      Leg_1_L: "foot_l1",
+      Leg_2_L: "foot_l2",
+      Ankle_L: "ankle_l",
+      Leg_1_R: "foot_r1",
+      Leg_2_R: "foot_r2",
+      Ankle_R: "ankle_r",
+    };
+    this.customRigPairs = Object.entries(boneMap).flatMap(([outfitName, avatarName]) => {
+      const outfit = outfitRoot.getObjectByName(outfitName);
+      const avatar = this.bodyModel?.model.getObjectByName(avatarName);
+      return outfit?.type === "Bone" && avatar
+        ? [{
+            outfit: outfit as THREE.Bone,
+            avatar,
+            outfitBindWorld: outfit.matrixWorld.clone(),
+            avatarBindWorld: avatar.matrixWorld.clone(),
+          }]
+        : [];
+    });
+  }
+
+  /** Copy the scaled/animated Mii rig into the GLB rig so weighted meshes follow it. */
+  private syncCustomOutfitRig() {
+    for (const pair of this.customRigPairs) {
+      const parent = pair.outfit.parent;
+      if (!parent) continue;
+      pair.avatar.updateWorldMatrix(true, false);
+      const avatarBindInverse = pair.avatarBindWorld.clone().invert();
+      const avatarDelta = new THREE.Matrix4().multiplyMatrices(
+        pair.avatar.matrixWorld,
+        avatarBindInverse,
+      );
+      const desiredWorld = new THREE.Matrix4().multiplyMatrices(
+        avatarDelta,
+        pair.outfitBindWorld,
+      );
+      const localMatrix = new THREE.Matrix4().multiplyMatrices(
+        parent.matrixWorld.clone().invert(),
+        desiredWorld,
+      );
+      localMatrix.decompose(pair.outfit.position, pair.outfit.quaternion, pair.outfit.scale);
+      pair.outfit.updateMatrixWorld(true);
+    }
+    this.customOutfitRoot?.traverse((object) => {
+      const mesh = object as THREE.SkinnedMesh;
+      if (mesh.isSkinnedMesh) mesh.skeleton.update();
+    });
+  }
+
+  /** Fit the exported GLB to the already-scaled body rig without hard-coded units. */
+  private fitCustomOutfitToAvatar() {
+    if (!this.customOutfitRoot || !this.currentModel) return;
+    this.modelRoot.updateWorldMatrix(true, true);
+    const targetBox = computeVisualBox(this.currentModel);
+    const outfitBox = computeVisualBox(this.customOutfitRoot);
+    const targetHeight = targetBox.max.y - targetBox.min.y;
+    const outfitHeight = outfitBox.max.y - outfitBox.min.y;
+    if (!Number.isFinite(targetHeight) || !Number.isFinite(outfitHeight) || outfitHeight <= 0) {
+      return;
+    }
+
+    const fitScale = targetHeight / outfitHeight;
+    this.customOutfitRoot.scale.multiplyScalar(fitScale);
+    this.customOutfitRoot.updateWorldMatrix(true, true);
+    const fittedBox = computeVisualBox(this.customOutfitRoot);
+    const targetCenter = targetBox.getCenter(new THREE.Vector3());
+    const fittedCenter = fittedBox.getCenter(new THREE.Vector3());
+    this.customOutfitRoot.position.add(targetCenter.sub(fittedCenter));
+    this.customOutfitRoot.updateWorldMatrix(true, true);
   }
 
   setExpression(index: number) {
@@ -259,11 +364,39 @@ export class AvatarScene {
       THREE.MathUtils.degToRad(rotation.yaw),
       THREE.MathUtils.degToRad(rotation.roll),
     );
-    this.customOutfitHeadRoot?.rotation.set(
-      THREE.MathUtils.degToRad(rotation.pitch),
-      THREE.MathUtils.degToRad(rotation.yaw),
-      THREE.MathUtils.degToRad(rotation.roll),
+    this.syncCustomOutfitHead();
+  }
+
+  private syncCustomOutfitHead() {
+    if (
+      !this.customOutfitHeadRoot ||
+      !this.headRoot ||
+      !this.customOutfitHeadBindWorld ||
+      !this.avatarHeadBindWorld
+    ) {
+      return;
+    }
+    this.headRoot.updateWorldMatrix(true, true);
+    const avatarDelta = new THREE.Matrix4().multiplyMatrices(
+      this.headRoot.matrixWorld,
+      this.avatarHeadBindWorld.clone().invert(),
     );
+    const desiredWorld = new THREE.Matrix4().multiplyMatrices(
+      avatarDelta,
+      this.customOutfitHeadBindWorld,
+    );
+    const parent = this.customOutfitHeadRoot.parent;
+    if (!parent) return;
+    const localMatrix = new THREE.Matrix4().multiplyMatrices(
+      parent.matrixWorld.clone().invert(),
+      desiredWorld,
+    );
+    localMatrix.decompose(
+      this.customOutfitHeadRoot.position,
+      this.customOutfitHeadRoot.quaternion,
+      this.customOutfitHeadRoot.scale,
+    );
+    this.customOutfitHeadRoot.updateMatrixWorld(true);
   }
 
   setBodyVisible(visible: boolean) {
@@ -453,6 +586,8 @@ export class AvatarScene {
     }
 
     this.resize();
+    this.bodyModel?.mixer.update(1 / 60);
+    this.syncCustomOutfitRig();
     this.controls.update();
     this.renderer.render(this.scene, this.camera);
     this.scheduleAnimation();
