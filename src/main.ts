@@ -33,12 +33,16 @@ import {
   releaseNotesForVersion,
   shouldShowReleaseNotes,
 } from "./lib/releaseNotes";
+import fflWasmUrl from "./assets/ffl-emscripten.wasm?url";
 
 // Bundled assets served from Vite's public/ dir.
 // NOTE: shipping should load a user-supplied .dat from disk instead of bundling
 // it (see docs/research/roadmap.md Phase 2 — do not redistribute Nintendo data).
 const FFL_RESOURCE_URL = "/AFLResHigh_2_3.dat";
-const FFL_WASM_URL = "/ffl-emscripten.wasm";
+// Import the exact WASM binary paired with the installed ffl.js package. Vite
+// fingerprints this asset so a cached preview cannot mix an old WASM file with
+// a newer Emscripten loader (which otherwise fails with a misleading camera error).
+const FFL_WASM_URL = fflWasmUrl;
 const FFL_RESOURCE_MIN_BYTES = 1_000_000;
 const FFL_RESOURCE_MAX_BYTES = 16_000_000;
 

@@ -1,7 +1,7 @@
 import type { FaceLandmarker, FaceLandmarkerResult } from "@mediapipe/tasks-vision";
 
 const MEDIAPIPE_WASM_URL =
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm";
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm";
 const FACE_LANDMARKER_MODEL_URL =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
 
@@ -232,16 +232,33 @@ async function createFaceLandmarker() {
   );
   const filesetResolver = await FilesetResolver.forVisionTasks(MEDIAPIPE_WASM_URL);
 
-  return FaceLandmarker.createFromOptions(filesetResolver, {
-    baseOptions: {
-      modelAssetPath: FACE_LANDMARKER_MODEL_URL,
-      delegate: "GPU",
-    },
-    runningMode: "VIDEO",
+  const commonOptions = {
+    runningMode: "VIDEO" as const,
     outputFaceBlendshapes: true,
     outputFacialTransformationMatrixes: true,
     numFaces: 1,
-  });
+  };
+
+  try {
+    return await FaceLandmarker.createFromOptions(filesetResolver, {
+      ...commonOptions,
+      baseOptions: {
+        modelAssetPath: FACE_LANDMARKER_MODEL_URL,
+        delegate: "GPU",
+      },
+    });
+  } catch (gpuError) {
+    // Some browsers/webviews expose WebGL but cannot initialize MediaPipe's
+    // GPU delegate. CPU detection is slower but keeps webcam tracking usable.
+    console.warn("[MiiTuber] MediaPipe GPU delegate unavailable; using CPU.", gpuError);
+    return FaceLandmarker.createFromOptions(filesetResolver, {
+      ...commonOptions,
+      baseOptions: {
+        modelAssetPath: FACE_LANDMARKER_MODEL_URL,
+        delegate: "CPU",
+      },
+    });
+  }
 }
 
 async function requestCameraStream(options: FaceTrackerStartOptions) {
