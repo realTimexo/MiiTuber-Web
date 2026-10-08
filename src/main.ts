@@ -123,9 +123,12 @@ async function promptForFflResource(): Promise<ArrayBuffer> {
 
 function chooseResourceFileFromGate(): Promise<File | null> {
   return new Promise((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".dat,application/octet-stream";
+    const input = document.querySelector<HTMLInputElement>("#resource-file-input");
+    if (!input) {
+      resolve(null);
+      return;
+    }
+    input.value = "";
     input.addEventListener("change", () => resolve(input.files?.[0] ?? null), {
       once: true,
     });

@@ -227,11 +227,101 @@ export class AvatarScene {
       null;
     this.fitCustomOutfitToAvatar();
     if (this.customOutfitHeadRoot && this.headRoot) {
-      this.headRoot.attach(this.customOutfitHeadRoot);
+      const avatarHeadBox = computeVisualBox(this.headRoot);
+      const sourceHeadRoot = this.customOutfitHeadRoot;
+      this.bakeCustomHeadMeshes(gltf.scene, this.modelRoot, sourceHeadRoot);
+      const accessoryRoot = this.bakeCustomHeadMeshes(
+        gltf.scene,
+        this.headRoot,
+        undefined,
+        (mesh) => /cap|hat|head|accessor|ring|glasses|mask/i.test(
+          `${mesh.name} ${mesh.parent?.name ?? ""}`,
+        ),
+      );
+      if (accessoryRoot) {
+        const bakedBox = computeVisualBox(accessoryRoot, true);
+        const avatarSize = avatarHeadBox.getSize(new THREE.Vector3());
+        const bakedSize = bakedBox.getSize(new THREE.Vector3());
+        const bakedWidth = Math.max(bakedSize.x, bakedSize.z);
+        const avatarWidth = Math.max(avatarSize.x, avatarSize.z);
+        if (bakedWidth > 0 && avatarWidth > 0) {
+          accessoryRoot.scale.multiplyScalar((avatarWidth / bakedWidth) * 0.96);
+        }
+        this.customOutfitHeadRoot = accessoryRoot;
+      }
+      if (this.customOutfitHeadRoot.parent !== this.headRoot) {
+        this.headRoot.attach(this.customOutfitHeadRoot);
+      }
+      this.alignCustomHeadToAvatar(avatarHeadBox);
     }
+    // Keep only baked body meshes and the reparented head rig in the render tree.
+    // The original GLB container can contain a full-size skeleton/pivot and would
+    // otherwise distort camera framing even when its source meshes are hidden.
+    this.modelRoot.remove(gltf.scene);
     this.renderer.render(this.scene, this.camera);
     if (this.currentModel) this.frameModel(this.modelRoot);
     return visibleMeshes;
+  }
+
+  /**
+   * Bake the Mii Creator head accessory in its current GLB pose. The resulting
+   * ordinary geometry can follow the FFL head as a rigid accessory regardless
+   * of the source GLB's skeleton hierarchy.
+   */
+  private bakeCustomHeadMeshes(
+    sourceRoot: THREE.Object3D,
+    targetParent: THREE.Object3D,
+    excludeRoot?: THREE.Object3D,
+    includeMesh?: (mesh: THREE.Mesh) => boolean,
+  ): THREE.Group | null {
+    const bakedRoot = new THREE.Group();
+    bakedRoot.name = "custom-mii-head-accessory-baked";
+    let count = 0;
+    sourceRoot.updateWorldMatrix(true, true);
+    targetParent.updateWorldMatrix(true, true);
+
+    sourceRoot.traverse((object) => {
+      const source = object as THREE.Mesh;
+      if (excludeRoot && (object === excludeRoot || excludeRoot.getObjectById(object.id))) {
+        return;
+      }
+      if (!source.isMesh || !source.visible) return;
+      if (includeMesh && !includeMesh(source)) return;
+      const position = source.geometry.getAttribute("position");
+      if (!position) return;
+
+      const geometry = source.geometry.clone();
+      const bakedPositions = new Float32Array(position.count * 3);
+      const vertex = new THREE.Vector3();
+      for (let index = 0; index < position.count; index += 1) {
+        source.getVertexPosition(index, vertex);
+        source.localToWorld(vertex);
+        targetParent.worldToLocal(vertex);
+        vertex.toArray(bakedPositions, index * 3);
+      }
+      geometry.setAttribute(
+        "position",
+        new THREE.Float32BufferAttribute(bakedPositions, 3),
+      );
+      const baked = new THREE.Mesh(geometry, source.material);
+      baked.name = `${source.name || "head-accessory"}-baked`;
+      baked.frustumCulled = false;
+      baked.renderOrder = 20;
+      const bakedMaterials = Array.isArray(baked.material) ? baked.material : [baked.material];
+      bakedMaterials.forEach((material) => {
+        material.depthTest = false;
+        material.depthWrite = false;
+        material.transparent = false;
+        material.opacity = 1;
+      });
+      bakedRoot.add(baked);
+      source.visible = false;
+      count += 1;
+    });
+
+    if (count === 0) return null;
+    targetParent.add(bakedRoot);
+    return bakedRoot;
   }
 
   clearCustomOutfit() {
@@ -256,7 +346,7 @@ export class AvatarScene {
     if (!this.customOutfitRoot || !this.currentModel) return;
     this.modelRoot.updateWorldMatrix(true, true);
     const targetBox = computeVisualBox(this.currentModel);
-    const outfitBox = computeVisualBox(this.customOutfitRoot);
+    const outfitBox = computeVisualBox(this.customOutfitRoot, true);
     const targetHeight = targetBox.max.y - targetBox.min.y;
     const outfitHeight = outfitBox.max.y - outfitBox.min.y;
     if (!Number.isFinite(targetHeight) || !Number.isFinite(outfitHeight) || outfitHeight <= 0) {
@@ -266,11 +356,39 @@ export class AvatarScene {
     const fitScale = targetHeight / outfitHeight;
     this.customOutfitRoot.scale.multiplyScalar(fitScale);
     this.customOutfitRoot.updateWorldMatrix(true, true);
-    const fittedBox = computeVisualBox(this.customOutfitRoot);
-    const targetCenter = targetBox.getCenter(new THREE.Vector3());
-    const fittedCenter = fittedBox.getCenter(new THREE.Vector3());
-    this.customOutfitRoot.position.add(targetCenter.sub(fittedCenter));
+    if (this.customOutfitHeadRoot && this.headRoot) {
+      const outfitHead = this.customOutfitHeadRoot.getWorldPosition(new THREE.Vector3());
+      const avatarHead = this.headRoot.getWorldPosition(new THREE.Vector3());
+      this.customOutfitRoot.position.add(avatarHead.sub(outfitHead));
+    } else {
+      const fittedBox = computeVisualBox(this.customOutfitRoot, true);
+      const targetCenter = targetBox.getCenter(new THREE.Vector3());
+      const fittedCenter = fittedBox.getCenter(new THREE.Vector3());
+      this.customOutfitRoot.position.add(targetCenter.sub(fittedCenter));
+    }
     this.customOutfitRoot.updateWorldMatrix(true, true);
+  }
+
+  /** Place the visible GLB cap on the actual rendered Mii head, not its GLB pivot. */
+  private alignCustomHeadToAvatar(avatarHeadBox: THREE.Box3) {
+    if (!this.customOutfitHeadRoot || !this.headRoot) return;
+    const capBox = computeVisualBox(this.customOutfitHeadRoot, true);
+    if (capBox.isEmpty() || avatarHeadBox.isEmpty()) return;
+
+    const capSize = capBox.getSize(new THREE.Vector3());
+    const headSize = avatarHeadBox.getSize(new THREE.Vector3());
+    const capCenter = capBox.getCenter(new THREE.Vector3());
+    const desiredCenter = new THREE.Vector3(
+      avatarHeadBox.min.x + headSize.x / 2,
+      avatarHeadBox.max.y + capSize.y / 2 + headSize.y * 0.012,
+      avatarHeadBox.min.z + headSize.z / 2,
+    );
+    const parent = this.customOutfitHeadRoot.parent;
+    if (!parent) return;
+    const currentLocal = parent.worldToLocal(capCenter.clone());
+    const desiredLocal = parent.worldToLocal(desiredCenter.clone());
+    this.customOutfitHeadRoot.position.add(desiredLocal.sub(currentLocal));
+    this.customOutfitHeadRoot.updateMatrixWorld(true);
   }
 
   setExpression(index: number) {

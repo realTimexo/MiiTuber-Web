@@ -99,13 +99,14 @@ export async function attachBodyToCharModel(
   };
 }
 
-export function computeVisualBox(model: THREE.Object3D): THREE.Box3 {
+export function computeVisualBox(model: THREE.Object3D, visibleOnly = false): THREE.Box3 {
   model.updateWorldMatrix(true, true);
   const box = new THREE.Box3();
   const meshBox = new THREE.Box3();
   model.traverse((child) => {
     const mesh = child as THREE.SkinnedMesh;
     if (!mesh.isMesh) return;
+    if (visibleOnly && !mesh.visible) return;
     if (mesh.isSkinnedMesh) {
       mesh.computeBoundingBox();
       if (!mesh.boundingBox) return;
